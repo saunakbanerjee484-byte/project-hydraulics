@@ -4,7 +4,7 @@ app_streamlit.py
 Interactive web dashboard built on Streamlit + Plotly, sharing the exact
 same physics engine as main.py / gui_tkinter.py.
 
-Run with:  streamlit run app_streamlit.py
+Run with:  python -m streamlit run app_streamlit.py
 """
 import dataclasses
 
@@ -13,7 +13,9 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 
-from open_channel_flow.geometry import Rectangular, Triangular, Trapezoidal, Circular, GeometryError
+from open_channel_flow.geometry import (
+    Rectangular, Triangular, Trapezoidal, Circular, Parabolic, IrregularSection, GeometryError
+)
 from open_channel_flow.core import OpenChannelFlow, ConvergenceError
 from open_channel_flow.energy import energy_curve, specific_energy
 from open_channel_flow.gvf import solve_profile, stitch_uniform_flow
@@ -31,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-PRIMARY = "#0EA5E9"      # sky blue
+PRIMARY = "#505EAF"      # sky blue
 ACCENT = "#F97316"       # amber
 DEEP = "#0B1F33"         # deep navy (bed / dark text)
 MILD_COLOR = "#22C55E"   # green
@@ -47,10 +49,10 @@ st.markdown(f"""
     .ocf-hero {{
         padding: 1.6rem 2rem;
         border-radius: 18px;
-        background: linear-gradient(120deg, #0B1F33 0%, #0F3D5C 45%, #0EA5E9 100%);
+        background: linear-gradient(120deg, #0B1F33 0%, #0F3D5C 45%, #505EAF 100%);
         color: white;
         margin-bottom: 1.4rem;
-        box-shadow: 0 10px 30px -12px rgba(14,165,233,0.55);
+        box-shadow: 0 10px 30px -12px rgba(80, 94, 175, 0.55);
     }}
     .ocf-hero h1 {{
         font-size: 1.9rem;
@@ -82,10 +84,6 @@ st.markdown(f"""
         font-weight: 600;
         color: #64748b;
     }}
-    /* Light, high-contrast sidebar -- forcing white text on every native
-       widget (old dark-navy theme) made slider values, number inputs,
-       and open dropdown text unreadable. This keeps Streamlit's normal
-       widget contrast intact and only themes the surrounding chrome. */
     section[data-testid="stSidebar"] {{
         background: linear-gradient(180deg, #EAF4FB 0%, #F7FBFE 55%, #FFFFFF 100%);
         border-right: 1px solid #d7e6f0;
@@ -101,17 +99,6 @@ st.markdown(f"""
     section[data-testid="stSidebar"] p {{
         color: #0F3D5C !important;
         font-weight: 600;
-    }}
-    section[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
-        background-color: #ffffff;
-        border: 1px solid #b9dcf0;
-    }}
-    section[data-testid="stSidebar"] [data-testid="stNumberInput"] input {{
-        background-color: #ffffff;
-        color: #0B1F33;
-    }}
-    section[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] {{
-        padding-top: 0.2rem;
     }}
     .ocf-jump-card {{
         background: linear-gradient(120deg, #FEF3C7 0%, #FEE2E2 100%);
@@ -130,47 +117,57 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# Sidebar: inputs
-# ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🌊 Channel Geometry")
-    shape = st.selectbox("Cross-section shape", ["Trapezoidal", "Rectangular", "Triangular", "Circular"])
+    shape = st.selectbox(
+        "Cross-section shape", 
+        ["Trapezoidal", "Rectangular", "Triangular", "Circular", "Parabolic", "Irregular"]
+    )
 
     if shape == "Rectangular":
-        B = st.slider("Bottom width B (m)", 0.5, 20.0, 4.0, 0.1)
+        B = st.number_input("Bottom width B (m)", min_value=0.000001, max_value=100000.0, value=4.0, format="%.6f")
         section_factory = lambda: Rectangular(B=B)
     elif shape == "Triangular":
-        z = st.slider("Side slope z (H:V)", 0.1, 4.0, 1.5, 0.1)
+        z = st.number_input("Side slope z (H:V)", min_value=0.000001, max_value=100000.0, value=1.5, format="%.6f")
         section_factory = lambda: Triangular(z=z)
     elif shape == "Circular":
-        D = st.slider("Pipe diameter D (m)", 0.3, 5.0, 1.5, 0.1)
+        # Safe default pipe diameter for standard discharges
+        D = st.number_input("Pipe diameter D (m)", min_value=0.000001, max_value=100000.0, value=5.0, format="%.6f")
         section_factory = lambda: Circular(D=D)
-    else:
-        B = st.slider("Bottom width B (m)", 0.5, 20.0, 4.0, 0.1)
-        z = st.slider("Side slope z (H:V)", 0.0, 4.0, 1.5, 0.1)
+    elif shape == "Parabolic":
+        C = st.number_input("Top width coefficient C (T = C*sqrt(y))", min_value=0.000001, max_value=100000.0, value=3.0, format="%.6f")
+        section_factory = lambda: Parabolic(C=C)
+    elif shape == "Irregular":
+        st.info("Using 5-point Natural River Cross-Section Profile")
+        stations = [0.0, 2.0, 5.0, 8.0, 10.0]
+        elevations = [5.0, 2.0, 0.0, 2.0, 5.0]
+        section_factory = lambda: IrregularSection(stations=stations, elevations=elevations)
+    else:  # Trapezoidal
+        B = st.number_input("Bottom width B (m)", min_value=0.000001, max_value=100000.0, value=4.0, format="%.6f")
+        z = st.number_input("Side slope z (H:V)", min_value=0.0, max_value=100000.0, value=1.5, format="%.6f")
         section_factory = lambda: Trapezoidal(B=B, z=z)
 
     st.markdown("### 💧 Flow Parameters")
-    S0 = st.number_input("Bed slope S0 (m/m)", 0.0001, 0.05, 0.001, format="%.4f")
-    Q = st.slider("Discharge Q (m³/s)", 1.0, 200.0, 20.0, 1.0)
-    n = st.slider("Manning's n", 0.010, 0.060, 0.025, 0.001)
+    S0 = st.number_input("Bed slope S0 (m/m)", min_value=0.000001, max_value=1.0, value=0.001, format="%.6f")
+    # Extended limit to 1,000,000 m³/s for heavy hydraulic engineering designs
+    Q = st.number_input("Discharge Q (m³/s)", min_value=0.000001, max_value=1000000.0, value=20.0, format="%.6f")
+    n = st.number_input("Manning's n", min_value=0.000001, max_value=1.0, value=0.025, format="%.6f")
 
     st.markdown("### 🚧 GVF Boundary")
     boundary_mode = st.radio("Boundary depth source", ["Direct entry", "Sluice gate", "Sharp-crested weir"])
     if boundary_mode == "Sluice gate":
-        a = st.slider("Gate opening a (m)", 0.05, 2.0, 0.3, 0.05)
-        Cc = st.slider("Contraction coefficient Cc", 0.4, 1.0, 0.61, 0.01)
+        a = st.number_input("Gate opening a (m)", min_value=0.000001, max_value=100000.0, value=0.3, format="%.6f")
+        Cc = st.number_input("Contraction coefficient Cc", min_value=0.000001, max_value=1.0, value=0.61, format="%.6f")
     elif boundary_mode == "Sharp-crested weir":
-        L_weir = st.slider("Weir length (m)", 0.5, 20.0, 4.0, 0.5)
-        P_weir = st.slider("Weir crest height P (m)", 0.1, 5.0, 1.0, 0.1)
-        Cw = st.slider("Weir coefficient Cw", 1.4, 2.2, 1.84, 0.01)
+        L_weir = st.number_input("Weir length (m)", min_value=0.000001, max_value=100000.0, value=4.0, format="%.6f")
+        P_weir = st.number_input("Weir crest height P (m)", min_value=0.000001, max_value=100000.0, value=1.0, format="%.6f")
+        Cw = st.number_input("Weir coefficient Cw", min_value=0.000001, max_value=10.0, value=1.84, format="%.6f")
     else:
-        y_start_direct = st.slider("Boundary depth y_start (m)", 0.1, 10.0, 3.0, 0.1)
+        y_start_direct = st.number_input("Boundary depth y_start (m)", min_value=0.000001, max_value=100000.0, value=3.0, format="%.6f")
 
     st.markdown("### 📏 Reach")
-    L = st.number_input("Reach length L (m)", 10.0, 20000.0, 1000.0)
-    dx = st.number_input("Step size dx (m)", 1.0, 100.0, 10.0)
+    L = st.number_input("Reach length L (m)", min_value=0.000001, max_value=1000000.0, value=1000.0, format="%.2f")
+    dx = st.number_input("Step size dx (m)", min_value=0.000001, max_value=10000.0, value=10.0, format="%.2f")
 
 # ---------------------------------------------------------------------------
 # Hero header
@@ -226,7 +223,7 @@ col4.metric("Classification", classification.capitalize())
 
 try:
     gvf_result = solve_profile(ocf, y_start, L, dx, yn=yn, yc=yc)
-except (ConvergenceError, ValueError) as e:
+except (ConvergenceError, ValueError, GeometryError) as e:
     st.error(f"⚠️ {e}")
     st.stop()
 
@@ -293,7 +290,7 @@ with tab1:
         ))
         if jump:
             fig_p.add_vline(x=jump["x_jump"], line=dict(color=STEEP_COLOR, dash="dashdot", width=2),
-                             annotation_text="⚡ Hydraulic jump", annotation_font_color=STEEP_COLOR)
+                            annotation_text="⚡ Hydraulic jump", annotation_font_color=STEEP_COLOR)
         fig_p.update_layout(
             title="Water Surface Profile", xaxis_title="x (m)", yaxis_title="Elevation (m)",
             template=PLOTLY_TEMPLATE, hovermode="x unified",
