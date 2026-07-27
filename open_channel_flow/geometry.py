@@ -217,8 +217,9 @@ class Parabolic(CrossSection):
     Prismatic Parabolic Channel (Natural Stream & Irrigation Channels):
     Governing Equation: Water Surface Top Width T = C * sqrt(y)
     Physics Integration:
-    - Area A = Integrate[ C*sqrt(z) dz, {0, y} ] = (2/3) * C * y^(1.5) = (2/3) * T * y
-    - Wetted Perimeter P = Series Arc Length Expansion over Parabolic Curve
+    - Area A = (2/3) * T * y = (2/3) * C * y^(1.5)
+    - Top Width T = C * sqrt(y)
+    - Wetted Perimeter P = Exact Closed-Form Arc Length Calculation for Parabola
     - Hydrostatic Area Moment (z_bar * A) = (2/5) * C * y^(2.5)
     """
     def __init__(self, C: float):
@@ -235,13 +236,20 @@ class Parabolic(CrossSection):
         return self.C * math.sqrt(y)
 
     def wetted_perimeter(self, y: float) -> float:
+        """
+        Exact Analytical Wetted Perimeter for Parabolic Cross-Section:
+        Derived from arc length integral of y = a * x^2 
+        where T is top width and y is depth.
+        """
         self.validate_depth(y)
         T = self.top_width(y)
-        x = 4.0 * y / T
-        if x < 0.001:
-            return T
-        # Series approximation for arc length of a parabola: P = T * (1 + 2/3*x^2 - 2/5*x^4 + ...)
-        return T * (1.0 + (2.0 / 3.0) * (x ** 2) - (2.0 / 5.0) * (x ** 4))
+        if T <= 0 or y <= 0:
+            return 0.0
+        
+        # Standard analytical formula for parabolic arc length
+        term1 = 0.5 * math.sqrt(16.0 * (y ** 2) + (T ** 2))
+        term2 = ((T ** 2) / (8.0 * y)) * math.log((4.0 * y + math.sqrt(16.0 * (y ** 2) + (T ** 2))) / T)
+        return term1 + term2
 
     def area_moment(self, y: float) -> float:
         self.validate_depth(y)
