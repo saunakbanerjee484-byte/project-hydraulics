@@ -219,7 +219,7 @@ class Parabolic(CrossSection):
     Physics Integration:
     - Area A = (2/3) * T * y = (2/3) * C * y^(1.5)
     - Top Width T = C * sqrt(y)
-    - Wetted Perimeter P = Exact Closed-Form Arc Length Calculation for Parabola
+    - Wetted Perimeter P = Exact Analytical Arc Length Calculation
     - Hydrostatic Area Moment (z_bar * A) = (2/5) * C * y^(2.5)
     """
     def __init__(self, C: float):
@@ -237,16 +237,14 @@ class Parabolic(CrossSection):
 
     def wetted_perimeter(self, y: float) -> float:
         """
-        Exact Analytical Wetted Perimeter for Parabolic Cross-Section:
-        Derived from arc length integral of y = a * x^2 
-        where T is top width and y is depth.
+        Exact Analytical Wetted Perimeter for Parabolic Cross-Section.
+        Derived from arc length integral of y = a * x^2 where T is top width and y is depth.
         """
         self.validate_depth(y)
         T = self.top_width(y)
         if T <= 0 or y <= 0:
-            return 0.0
-        
-        # Standard analytical formula for parabolic arc length
+            return 1e-6
+
         term1 = 0.5 * math.sqrt(16.0 * (y ** 2) + (T ** 2))
         term2 = ((T ** 2) / (8.0 * y)) * math.log((4.0 * y + math.sqrt(16.0 * (y ** 2) + (T ** 2))) / T)
         return term1 + term2
@@ -262,8 +260,9 @@ class Parabolic(CrossSection):
 
 class IrregularSection(CrossSection):
     """
-    Natural River Cross-Section via Station-Elevation Coordinates (HEC-RAS Standard).
-    Solves Area, Perimeter, and Centroid Moments via Discrete Trapezoidal Numerical Quadrature.
+    Natural River Cross-Section via Station-Elevation Coordinate Pairs (HEC-RAS Standard).
+    Solves Area, Perimeter, and Centroid Moments via Discrete Numerical Integration.
+    Engineered to handle extreme datasets and NumPy 2.0+ deprecations smoothly.
     """
     def __init__(self, stations: list[float], elevations: list[float]):
         if len(stations) != len(elevations) or len(stations) < 3:
@@ -301,6 +300,9 @@ class IrregularSection(CrossSection):
         sub_x, sub_z, z_w = self._get_submerged_segments(y)
         if len(sub_x) < 2:
             return 1e-6
+        # Fixes NumPy 2.0+ deprecation of np.trapz
+        if hasattr(np, "trapezoid"):
+            return float(np.trapezoid(z_w - sub_z, sub_x))
         return float(np.trapz(z_w - sub_z, sub_x))
 
     def top_width(self, y: float) -> float:
